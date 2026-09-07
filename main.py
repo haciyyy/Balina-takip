@@ -18,7 +18,7 @@ def run_flask():
 # --- Bot Konfigürasyon ve Mantığı ---
 TELEGRAM_TOKEN = "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM"
 CHAT_ID = "8833182824"
-MIN_POSITION_SIZE = 500000
+MIN_POSITION_SIZE = 5000
 
 notified_positions = set()
 
