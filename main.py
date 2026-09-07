@@ -6,12 +6,12 @@ from flask import Flask
 from datetime import datetime
 
 # ==========================================
-# ⚙️ BOT AYARLARI (İstediğin Gibi Değiştir)
+# ⚙️ BOT AYARLARI
 # ==========================================
-TOP_COINS_LIMIT = 100          # Taranacak en yüksek hacimli coin sayısı (Örn: 50, 100, 150)
-MIN_POSITION_SIZE = 500000     # Minimum işlem büyüklüğü ($500k)
-POSITION_CHANGE_THRESHOLD = 1000000  # $1M açık pozisyon değişim eşiği
-SCAN_INTERVAL = 20             # Tarama sıklığı (saniye cinsinden)
+TOP_COINS_LIMIT = 100          # En yüksek hacimli ilk 100 coin
+MIN_POSITION_SIZE = 300000     # Altcoin'ler için min işlem filtresi ($300k)
+POSITION_CHANGE_THRESHOLD = 500000  # Altcoin'ler için OI değişim eşiği ($500k)
+SCAN_INTERVAL = 15             # Tarama sıklığı (15 saniye)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM")
 CHAT_ID = os.environ.get("CHAT_ID", "8833182824")
@@ -23,7 +23,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return f"Balina Botu Aktif! Target: Top {TOP_COINS_LIMIT} Coins"
+    return f"Gelis mis Balina Botu Aktif! Top {TOP_COINS_LIMIT} Coins"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -38,9 +38,9 @@ def send_telegram_alert(message):
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code != 200:
-            print(f"Telegram API Hatası: {response.text}")
+            print(f"Telegram API Hatasi: {response.text}")
     except Exception as e:
-        print(f"Telegram Hatası: {e}")
+        print(f"Telegram Hatasi: {e}")
 
 def get_market_data():
     url = "https://api.hyperliquid.xyz/info"
@@ -52,7 +52,7 @@ def get_market_data():
             return response.json()
         return None
     except Exception as e:
-        print(f"Piyasa verisi çekme hatası: {e}")
+        print(f"Piyasa verisi hatasi: {e}")
         return None
 
 def get_recent_trades_for_coin(coin):
@@ -69,13 +69,11 @@ def get_recent_trades_for_coin(coin):
 
 def analyze_large_trades(universe):
     current_time = datetime.now()
-    
-    # Dinamik olarak belirlediğin TOP_COINS_LIMIT kadar coin çekilir
     target_coins = [asset.get("name") for asset in universe[:TOP_COINS_LIMIT]]
     
     for coin in target_coins:
         trades = get_recent_trades_for_coin(coin)
-        time.sleep(0.04)  # Rate limit emniyet beklemesi
+        time.sleep(0.03)  # Rate limit emniyeti
         
         for trade in trades:
             try:
@@ -86,7 +84,10 @@ def analyze_large_trades(universe):
                 
                 trade_value = size * price
                 
-                if trade_value < MIN_POSITION_SIZE:
+                # BTC, ETH, SOL için esnek işlem eşiği ($150k), diğerleri ($300k)
+                min_threshold = 150000 if coin in ["BTC", "ETH", "SOL"] else MIN_POSITION_SIZE
+                
+                if trade_value < min_threshold:
                     continue
                 
                 trade_id = f"{coin}_{trade_time}_{int(trade_value)}"
@@ -94,20 +95,14 @@ def analyze_large_trades(universe):
                     continue
                 
                 direction = "🟢 LONG (ALIM)" if side == "B" else "🔴 SHORT (SATIM)"
-                
-                if trade_value >= 5000000:
-                    emoji = "🐋"
-                elif trade_value >= 1000000:
-                    emoji = "🦈"
-                else:
-                    emoji = "🐟"
+                emoji = "🐋" if trade_value >= 2000000 else "🦈"
                 
                 msg = (
                     f"{emoji} *BÜYÜK İŞLEM TESPİT EDİLDİ!*\n\n"
                     f"📌 *Coin:* `{coin}`\n"
-                    f"📊 *İşlem Yönü:* {direction}\n"
-                    f"💰 *İşlem Değeri:* `${trade_value:,.2f}`\n"
-                    f"📈 *İşlem Fiyatı:* `${price:,.4f}`\n"
+                    f"📊 *Yön:* {direction}\n"
+                    f"💰 *Değer:* `${trade_value:,.2f}`\n"
+                    f"📈 *Fiyat:* `${price:,.4f}`\n"
                     f"🔢 *Miktar:* `{size:,.4f}`\n"
                     f"🕐 *Zaman:* `{datetime.fromtimestamp(trade_time/1000).strftime('%H:%M:%S')}`\n"
                 )
@@ -116,7 +111,7 @@ def analyze_large_trades(universe):
                 notified_trades[trade_id] = current_time
                 
             except Exception as e:
-                print(f"Trade analiz hatası: {e}")
+                print(f"Trade hatasi: {e}")
 
 def monitor_position_changes(data):
     if not data:
@@ -138,20 +133,39 @@ def monitor_position_changes(data):
             current_position_value = open_interest * oracle_price
             
             if symbol in previous_positions:
-                prev_value = previous_positions[symbol]
-                change = current_position_value - prev_value
+                prev_val = previous_positions[symbol]['val']
+                prev_price = previous_positions[symbol]['px']
                 
-                if abs(change) >= POSITION_CHANGE_THRESHOLD:
+                change = current_position_value - prev_val
+                price_change = oracle_price - prev_price
+                
+                # BTC, ETH, SOL için esnek OI eşiği ($300k), diğerleri ($500k)
+                oi_threshold = 300000 if symbol in ["BTC", "ETH", "SOL"] else POSITION_CHANGE_THRESHOLD
+                
+                if abs(change) >= oi_threshold:
+                    # FİYAT + OI ÇAPRAZ PİYASA TEŞHİSİ
+                    if change > 0 and price_change >= 0:
+                        action = "🟢 BÜYÜK LONG GİRİŞİ (Yeni Alıcılar)"
+                        emoji = "🚀"
+                    elif change > 0 and price_change < 0:
+                        action = "🔴 BÜYÜK SHORT GİRİŞİ (Baskı Var)"
+                        emoji = "📉"
+                    elif change < 0 and price_change >= 0:
+                        action = "⚡ SHORT SQUEEZE (Short'lar Kapanıyor/Patlıyor!)"
+                        emoji = "🔥"
+                    else:
+                        action = "💥 LONG LİKİDASYON / Kar Satışı"
+                        emoji = "⚠️"
+
                     direction = "ARTIŞ 📈" if change > 0 else "AZALIŞ 📉"
-                    action = "NET LONG HAKİMİYETİ" if change > 0 else "NET SHORT HAKİMİYETİ"
                     
                     pos_key = f"{symbol}_{int(change/100000)}"
                     if pos_key not in notified_trades:
                         msg = (
-                            f"🚨 *AÇIK POZİSYON DEĞİŞİMİ!*\n\n"
+                            f"{emoji} *AÇIK POZİSYON DEĞİŞİMİ!*\n\n"
                             f"📌 *Coin:* `{symbol}`\n"
-                            f"📊 *Değişim:* {direction}\n"
-                            f"💡 *Piyasa Eğilimi:* `{action}`\n"
+                            f"📊 *OI Değişimi:* {direction}\n"
+                            f"💡 *Piyasa Teşhisi:* `{action}`\n"
                             f"💰 *Değişim Miktarı:* `${abs(change):,.2f}`\n"
                             f"📈 *Toplam Açık Pozisyon:* `${current_position_value:,.2f}`\n"
                             f"🎯 *Güncel Fiyat:* `${oracle_price:,.4f}`\n"
@@ -160,17 +174,20 @@ def monitor_position_changes(data):
                         send_telegram_alert(msg)
                         notified_trades[pos_key] = current_time
             
-            previous_positions[symbol] = current_position_value
+            # Fiyat ve OI değerini hafızaya alma
+            previous_positions[symbol] = {
+                'val': current_position_value,
+                'px': oracle_price
+            }
             
     except Exception as e:
-        print(f"Pozisyon izleme hatası: {e}")
+        print(f"Pozisyon hatasi: {e}")
 
 def tracker_loop():
-    send_telegram_alert("⚙️ *Balina Takip Botu Ayarları Güncellendi!*\n\n"
-                       f"🎯 *Tarama Kapsamı:* İlk {TOP_COINS_LIMIT} Coin\n"
-                       f"💵 *Min İşlem Eşiği:* ${MIN_POSITION_SIZE:,}\n"
-                       f"⏱️ *Tarama Sıklığı:* {SCAN_INTERVAL} saniye\n\n"
-                       "Bot kesintisiz takibe devam ediyor...")
+    send_telegram_alert("🎯 *Gelişmiş Balina Botu Aktif!*\n\n"
+                       f"Kapsam: Top {TOP_COINS_LIMIT} Coin\n"
+                       "Gelişmiş Piyasa Teşhisi (Short Squeeze & Likidasyon) entegre edildi.\n"
+                       "Canlı tarama başladı...")
     
     while True:
         try:
@@ -184,9 +201,8 @@ def tracker_loop():
                 notified_trades.clear()
 
         except Exception as e:
-            print(f"Genel tarama hatası: {e}")
+            print(f"Döngü hatasi: {e}")
         
-        # Dinamik bekleme süresi
         time.sleep(SCAN_INTERVAL)
 
 if __name__ == "__main__":
