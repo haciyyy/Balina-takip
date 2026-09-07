@@ -13,35 +13,40 @@ def send_telegram(msg):
 
 @app.route('/')
 def home():
-    return "API Test Sunucusu"
+    return "Hyperliquid Resmi API Testi"
 
 def run_test():
-    url = "https://app.coinmarketman.com/api/hyperliquid/large-positions"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    # Hyperliquid Resmi Node API Adresi
+    url = "https://api.hyperliquid.xyz/info"
+    headers = {"Content-Type": "application/json"}
+    
+    # Tüm piyasa verilerini ve son işlemleri çekme isteği
+    payload = {"type": "metaAndAssetCtxs"}
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         status = response.status_code
         
         if status == 200:
             data = response.json()
-            positions = data.get("positions", [])
-            count = len(positions)
+            universe = data[0].get("universe", [])
+            asset_ctxs = data[1]
             
-            if count > 0:
-                sample = positions[0]
-                msg = (
-                    f"✅ *API Bağlantısı Başarılı! (HTTP 200)*\n\n"
-                    f"📊 *Toplam Çekilen Pozisyon Sayısı:* `{count}`\n"
-                    f"🔍 *Örnek Pozisyon:* `{sample.get('symbol')}` - `${float(sample.get('size_usd', 0)):,.2f}`"
-                )
-            else:
-                msg = f"⚠️ *API Bağlandı (HTTP 200) ama gelen pozisyon listesi boş!*"
+            # Örnek ilk coin verisini çekme (BTC)
+            btc_data = asset_ctxs[0] if asset_ctxs else {}
+            oracle_px = btc_data.get("oraclePx", "N/A")
+            
+            msg = (
+                f"✅ *Hyperliquid Resmi API Bağlantısı Başarılı! (HTTP 200)*\n\n"
+                f"📊 *Listelenen Varlık Sayısı:* `{len(universe)}`\n"
+                f"🪙 *BTC Oracle Fiyatı:* `${float(oracle_px):,.2f}`\n\n"
+                f"🚀 *Sonuç:* Engelleme yok, doğrudan borsa verisi çekilebiliyor!"
+            )
         else:
-            msg = f"❌ *API Bağlantı Hatası!* HTTP Kod: `{status}`"
+            msg = f"❌ *Hyperliquid API Hatası!* HTTP Kod: `{status}`"
             
     except Exception as e:
-        msg = f"💥 *Bağlantı İstek Hatası:* `{str(e)}`"
+        msg = f"💥 *Bağlantı Hatası:* `{str(e)}`"
         
     send_telegram(msg)
 
