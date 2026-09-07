@@ -1,6 +1,21 @@
+import os
 import time
+import threading
 import requests
+from flask import Flask
 
+# --- Render Port / Web Sunucusu (Uyku Engelleyici) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Balina Botu Aktif ve Çalışıyor!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# --- Bot Konfigürasyon ve Mantığı ---
 TELEGRAM_TOKEN = "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM"
 CHAT_ID = "8833182824"
 MIN_POSITION_SIZE = 500000
@@ -19,8 +34,6 @@ def send_telegram_alert(message):
         return response.json()
     except Exception as e:
         print(f"Telegram Gönderim Hatası: {e}")
-
-send_telegram_alert("🚀 *Balina Takip Botu Bağlandı!*\n\n$500k üzeri pozisyonlar taranıyor...")
 
 def check_hyperliquid_positions():
     url = "https://app.coinmarketman.com/api/hyperliquid/large-positions"
@@ -50,6 +63,14 @@ def check_hyperliquid_positions():
     except Exception as e:
         print(f"Veri çekme hatası: {e}")
 
-while True:
-    check_hyperliquid_positions()
-    time.sleep(30)
+def tracker_loop():
+    send_telegram_alert("🚀 *Balina Botu Web Service Olarak Başlatıldı!* 7/24 Kesintisiz Tarama Yapılıyor...")
+    while True:
+        check_hyperliquid_positions()
+        time.sleep(30)
+
+# Flask'ı ve Botu Aynı Anda Başlat
+if __name__ == "__main__":
+    t = threading.Thread(target=tracker_loop)
+    t.start()
+    run_flask()
