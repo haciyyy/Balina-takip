@@ -12,7 +12,7 @@ import websocket
 from flask import Flask
 
 # ============================================================
-# CONFIG
+# CONFIG (GÜÇLENDİRİLMİŞ AYARLAR)
 # ============================================================
 
 API_URL = "https://api.hyperliquid.xyz/info"
@@ -23,9 +23,12 @@ CHAT_ID = os.environ.get("CHAT_ID", "8833182824")
 
 TOP_COINS = 100
 OI_UPDATE_SECONDS = 15
-SIGNAL_COOLDOWN_SECONDS = 300
 
-MIN_SCORE = 6
+# KALİTE FİLTRELERİ
+SIGNAL_COOLDOWN_SECONDS = 1800  # Aynı coin için 30 dakika cooldown
+MIN_SCORE = 8                   # Minimum skor (Eski: 6 -> Yeni: 8)
+MIN_STRENGTH = 60              # Minimum sinyal gücü %60
+MIN_VOLUME_RATIO = 1.2         # En az normalin 1.2 katı hacim olmalı
 
 REQUIRE_5M_CONFIRMATION = True
 WHALE_USD = 100_000
@@ -42,7 +45,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Hyperliquid Direction Bot Running", 200
+    return "Hyperliquid Direction Bot (Optimized) Running", 200
 
 # ============================================================
 # GLOBAL STATE
@@ -156,7 +159,6 @@ def hl_info(payload, retries=3):
         try:
             response = requests.post(API_URL, json=payload, timeout=15)
             if response.status_code == 429:
-                # Rate limit takıldıysa biraz bekle ve tekrar dene
                 time.sleep(2)
                 continue
             response.raise_for_status()
@@ -194,12 +196,11 @@ def load_top_coins():
         coins = [x[0] for x in rows[:TOP_COINS]]
 
         print(f"{len(coins)} coin yüklendi.", flush=True)
-        print(coins[:20], flush=True)
     except Exception as e:
         print("Coin loading error:", e, flush=True)
 
 # ============================================================
-# INITIAL CANDLE HISTORY (Rate Limited Rate-Friendly)
+# INITIAL CANDLE HISTORY
 # ============================================================
 
 def load_initial_candles():
@@ -240,7 +241,6 @@ def load_initial_candles():
             except Exception as e:
                 print("Candle load error", coin, interval, e, flush=True)
 
-            # Rate limit'e takılmamak için her istek arası küçük bir bekleme
             time.sleep(0.25)
 
         print("History loaded:", coin, flush=True)
@@ -471,10 +471,7 @@ def process_candle(data):
 def websocket_worker():
     while True:
         try:
-            print("WebSocket bağlanıyor...", flush=True)
             ws = websocket.create_connection(WS_URL, timeout=30)
-            print("WebSocket başarıyla bağlandı.", flush=True)
-
             for coin in coins:
                 ws_subscribe(ws, coin)
 
@@ -500,15 +497,14 @@ def websocket_worker():
                     elif channel == "candle":
                         process_candle(data)
                 except Exception as e:
-                    print("WS receive error:", e, flush=True)
                     break
         except Exception as e:
-            print("WebSocket error:", e, flush=True)
+            pass
 
         time.sleep(5)
 
 # ============================================================
-# SIGNAL ENGINE
+# OPTIMIZED SIGNAL ENGINE (SATIŞ/ALIŞ FİLTRELERİ GÜÇLENDİRİLDİ)
 # ============================================================
 
 def generate_signal(coin):
@@ -517,6 +513,10 @@ def generate_signal(coin):
     i15 = calculate_indicators("15m", coin)
 
     if not i1 or not i5 or not i15:
+        return None
+
+    # HACİM KONTROLÜ (En az 1.2x hacim şartı)
+    if i1["volume_ratio"] < MIN_VOLUME_RATIO and i5["volume_ratio"] < MIN_VOLUME_RATIO:
         return None
 
     with lock:
@@ -580,7 +580,7 @@ def generate_signal(coin):
         elif 32 <= i5["rsi"] <= 48:
             short_score += 1
 
-    # Volume
+    # Volume Score
     if i1["volume_ratio"] >= 1.5:
         if i1["momentum"] > 0: long_score += 1
         elif i1["momentum"] < 0: short_score += 1
@@ -597,21 +597,15 @@ def generate_signal(coin):
     elif oi_pct > 0.30 and price_5m < -0.30:
         short_score += 2
         reasons_short.append("OI↑ + Price↓")
-    elif oi_pct < -0.30 and price_5m > 0.30:
-        long_score += 1
-        reasons_long.append("Short covering")
-    elif oi_pct < -0.30 and price_5m < -0.30:
-        short_score += 1
-        reasons_short.append("Long liquidation")
 
     # Trade Flow
     total_flow = buy + sell
     if total_flow > 0:
         buy_ratio = buy / total_flow
-        if buy_ratio >= 0.60:
+        if buy_ratio >= 0.55:
             long_score += 2
             reasons_long.append("Aggressive buy flow")
-        elif buy_ratio <= 0.40:
+        elif buy_ratio <= 0.45:
             short_score += 2
             reasons_short.append("Aggressive sell flow")
 
@@ -634,17 +628,26 @@ def generate_signal(coin):
 
     # Decision
     difference = abs(long_score - short_score)
-    if long_score >= MIN_SCORE and long_score > short_score and difference >= 2:
+    winning_score = max(long_score, short_score)
+    
+    # YÜKSEK KALİTE SİNYAL SÜZGEÇLERİ
+    if winning_score < MIN_SCORE or difference < 3:
+        return None
+
+    if long_score > short_score:
         direction = "LONG"
-    elif short_score >= MIN_SCORE and short_score > long_score and difference >= 2:
+    elif short_score > long_score:
         direction = "SHORT"
     else:
         return None
 
     # Signal Strength
     max_possible = 18
-    winning_score = max(long_score, short_score)
     strength = min(100, int((winning_score / max_possible) * 100))
+
+    # %60 Altındaki Zayıf Sinyalleri İptal Et
+    if strength < MIN_STRENGTH:
+        return None
 
     return {
         "coin": coin,
@@ -884,7 +887,7 @@ def cleanup():
 def start_background_tasks():
     print("""
 ==========================================================
-      HYPERLIQUID LONG / SHORT DIRECTION BOT RUNNING
+      HYPERLIQUID LONG / SHORT DIRECTION BOT (OPTIMIZED)
 ==========================================================
 """, flush=True)
     init_db()
