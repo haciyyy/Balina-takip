@@ -25,7 +25,6 @@ TOP_COINS = 100
 OI_UPDATE_SECONDS = 15
 SIGNAL_COOLDOWN_SECONDS = 300
 
-# OPTİMİZE EDİLDİ: Sinyal frekansını yakalamak için skor eşiği esnetildi
 MIN_SCORE = 6
 
 REQUIRE_5M_CONFIRMATION = True
@@ -339,7 +338,6 @@ def calculate_trade_flow(coin, seconds=300):
     now = int(time.time() * 1000)
     buy = sell = whale_buy = whale_sell = 0
 
-    # Lock süresi kilitlenmeleri önlemek için minimal tutuldu
     with lock:
         trade_list = list(trades[coin])
 
@@ -617,7 +615,6 @@ def generate_signal(coin):
             short_score += 2
             reasons_short.append("Whale sell")
 
-    # OPTİMİZE EDİLDİ: 5M Onayı esnetildi
     if REQUIRE_5M_CONFIRMATION:
         if long_score > short_score and not (i5["ema9"] > i5["ema21"]):
             return None
@@ -870,10 +867,10 @@ def cleanup():
         time.sleep(60)
 
 # ============================================================
-# MAIN
+# MAIN & THREAD START
 # ============================================================
 
-def main():
+def start_background_tasks():
     print("""
 ==========================================================
       HYPERLIQUID LONG / SHORT DIRECTION BOT RUNNING
@@ -886,6 +883,7 @@ def main():
         print("Coin listesi alınamadı.")
         return
 
+    # Mum verileri arka planda indirilecek
     load_initial_candles()
 
     threading.Thread(target=update_oi, daemon=True).start()
@@ -895,8 +893,10 @@ def main():
     threading.Thread(target=performance_report, daemon=True).start()
     threading.Thread(target=cleanup, daemon=True).start()
 
-    # Flask sunucusu
-    app.run(host="0.0.0.0", port=8080, threaded=True)
-
 if __name__ == "__main__":
-    main()
+    # 1. Arka plan süreçlerini thread olarak başlat
+    threading.Thread(target=start_background_tasks, daemon=True).start()
+    
+    # 2. Render portunu anında yakala ve canlıya al
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
