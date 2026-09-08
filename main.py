@@ -18,7 +18,7 @@ from flask import Flask
 API_URL = "https://api.hyperliquid.xyz/info"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "7806644281:AAHcT0l8PrH-V9M2H5X3C83YKxM0M5wj34Y")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM")
 CHAT_ID = os.environ.get("CHAT_ID", "8833182824")
 
 TOP_COINS = 100
