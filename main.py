@@ -131,7 +131,7 @@ def save_signal(data):
 # ============================================================
 
 def send_telegram(message):
-    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("BURAYA"):
+    if not TELEGRAM_TOKEN:
         print("Telegram token ayarlanmamış.", flush=True)
         return
 
@@ -148,17 +148,24 @@ def send_telegram(message):
         print("Telegram error:", e, flush=True)
 
 # ============================================================
-# HYPERLIQUID REST
+# HYPERLIQUID REST (With Rate-Limit Handling)
 # ============================================================
 
-def hl_info(payload):
-    try:
-        response = requests.post(API_URL, json=payload, timeout=15)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print("REST error:", e, flush=True)
-        return None
+def hl_info(payload, retries=3):
+    for attempt in range(retries):
+        try:
+            response = requests.post(API_URL, json=payload, timeout=15)
+            if response.status_code == 429:
+                # Rate limit takıldıysa biraz bekle ve tekrar dene
+                time.sleep(2)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if attempt == retries - 1:
+                print("REST error:", e, flush=True)
+            time.sleep(1)
+    return None
 
 # ============================================================
 # LOAD TOP COINS
@@ -192,7 +199,7 @@ def load_top_coins():
         print("Coin loading error:", e, flush=True)
 
 # ============================================================
-# INITIAL CANDLE HISTORY
+# INITIAL CANDLE HISTORY (Rate Limited Rate-Friendly)
 # ============================================================
 
 def load_initial_candles():
@@ -232,6 +239,9 @@ def load_initial_candles():
                         })
             except Exception as e:
                 print("Candle load error", coin, interval, e, flush=True)
+
+            # Rate limit'e takılmamak için her istek arası küçük bir bekleme
+            time.sleep(0.25)
 
         print("History loaded:", coin, flush=True)
 
@@ -884,7 +894,6 @@ def start_background_tasks():
         print("Coin listesi alınamadı.", flush=True)
         return
 
-    # WebSocket, OI ve Sinyal motorunu BEKLEMEDEN hemen başlat
     threading.Thread(target=update_oi, daemon=True).start()
     threading.Thread(target=websocket_worker, daemon=True).start()
     threading.Thread(target=signal_monitor, daemon=True).start()
@@ -892,11 +901,9 @@ def start_background_tasks():
     threading.Thread(target=performance_report, daemon=True).start()
     threading.Thread(target=cleanup, daemon=True).start()
 
-    # Ağır REST istekleri yapan mum yüklemesini en son ayrı bir thread'de çalıştır
     print("Geçmiş mum verileri arka planda indiriliyor...", flush=True)
     threading.Thread(target=load_initial_candles, daemon=True).start()
 
-# Gunicorn ile çalışabilmesi için thread başlatmayı en dış seviyeye alıyoruz
 threading.Thread(target=start_background_tasks, daemon=True).start()
 
 if __name__ == "__main__":
