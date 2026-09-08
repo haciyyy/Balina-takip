@@ -42,7 +42,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Hyperliquid Direction Bot Running"
+    return "Hyperliquid Direction Bot Running", 200
 
 # ============================================================
 # GLOBAL STATE
@@ -132,7 +132,7 @@ def save_signal(data):
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("BURAYA"):
-        print("Telegram token ayarlanmamış.")
+        print("Telegram token ayarlanmamış.", flush=True)
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -143,9 +143,9 @@ def send_telegram(message):
             timeout=10
         )
         if res.status_code != 200:
-            print(f"Telegram API Hatası ({res.status_code}): {res.text}")
+            print(f"Telegram API Hatası ({res.status_code}): {res.text}", flush=True)
     except Exception as e:
-        print("Telegram error:", e)
+        print("Telegram error:", e, flush=True)
 
 # ============================================================
 # HYPERLIQUID REST
@@ -157,7 +157,7 @@ def hl_info(payload):
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print("REST error:", e)
+        print("REST error:", e, flush=True)
         return None
 
 # ============================================================
@@ -186,10 +186,10 @@ def load_top_coins():
         rows.sort(key=lambda x: x[1], reverse=True)
         coins = [x[0] for x in rows[:TOP_COINS]]
 
-        print(f"{len(coins)} coin yüklendi.")
-        print(coins[:20])
+        print(f"{len(coins)} coin yüklendi.", flush=True)
+        print(coins[:20], flush=True)
     except Exception as e:
-        print("Coin loading error:", e)
+        print("Coin loading error:", e, flush=True)
 
 # ============================================================
 # INITIAL CANDLE HISTORY
@@ -231,9 +231,9 @@ def load_initial_candles():
                             "n": int(candle["n"])
                         })
             except Exception as e:
-                print("Candle load error", coin, interval, e)
+                print("Candle load error", coin, interval, e, flush=True)
 
-        print("History:", coin)
+        print("History loaded:", coin, flush=True)
 
 # ============================================================
 # INDICATORS
@@ -366,6 +366,7 @@ def calculate_trade_flow(coin, seconds=300):
 # ============================================================
 
 def update_oi():
+    print("OI Güncelleme servisi başladı...", flush=True)
     while True:
         data = hl_info({"type": "metaAndAssetCtxs"})
         if data:
@@ -397,7 +398,7 @@ def update_oi():
                         })
                         previous_oi[coin] = oi_usd
             except Exception as e:
-                print("OI parse error:", e)
+                print("OI parse error:", e, flush=True)
 
         time.sleep(OI_UPDATE_SECONDS)
 
@@ -455,14 +456,14 @@ def process_candle(data):
                 else:
                     arr.append(item)
         except Exception as e:
-            print("Candle parse error:", e)
+            print("Candle parse error:", e, flush=True)
 
 def websocket_worker():
     while True:
         try:
-            print("WebSocket bağlanıyor...")
+            print("WebSocket bağlanıyor...", flush=True)
             ws = websocket.create_connection(WS_URL, timeout=30)
-            print("WebSocket bağlandı.")
+            print("WebSocket başarıyla bağlandı.", flush=True)
 
             for coin in coins:
                 ws_subscribe(ws, coin)
@@ -489,10 +490,10 @@ def websocket_worker():
                     elif channel == "candle":
                         process_candle(data)
                 except Exception as e:
-                    print("WS receive error:", e)
+                    print("WS receive error:", e, flush=True)
                     break
         except Exception as e:
-            print("WebSocket error:", e)
+            print("WebSocket error:", e, flush=True)
 
         time.sleep(5)
 
@@ -727,7 +728,7 @@ SELL: ${signal["sell"]:,.0f}
 # ============================================================
 
 def signal_monitor():
-    print("Signal engine başladı.")
+    print("Signal engine başladı.", flush=True)
     while True:
         try:
             for coin in list(coins):
@@ -774,10 +775,10 @@ def signal_monitor():
                     send_signal(signal)
 
                 except Exception as e:
-                    print("Signal error", coin, e)
+                    print("Signal error", coin, e, flush=True)
 
         except Exception as e:
-            print("Monitor error:", e)
+            print("Monitor error:", e, flush=True)
 
         time.sleep(10)
 
@@ -825,7 +826,7 @@ def evaluate_signals():
             conn.commit()
             conn.close()
         except Exception as e:
-            print("Evaluator error:", e)
+            print("Evaluator error:", e, flush=True)
 
         time.sleep(30)
 
@@ -848,10 +849,10 @@ def performance_report():
                 accuracy = (len(wins) / len(values)) * 100
                 avg = sum(values) / len(values)
 
-                print(f"\nPERFORMANCE {period}\nSignals: {len(values)} | Wins: {len(wins)} | Accuracy: {accuracy:.2f}% | Avg: {avg:+.4f}%\n")
+                print(f"\nPERFORMANCE {period}\nSignals: {len(values)} | Wins: {len(wins)} | Accuracy: {accuracy:.2f}% | Avg: {avg:+.4f}%\n", flush=True)
             conn.close()
         except Exception as e:
-            print("Performance error:", e)
+            print("Performance error:", e, flush=True)
 
 # ============================================================
 # CLEANUP
@@ -875,17 +876,15 @@ def start_background_tasks():
 ==========================================================
       HYPERLIQUID LONG / SHORT DIRECTION BOT RUNNING
 ==========================================================
-""")
+""", flush=True)
     init_db()
     load_top_coins()
 
     if not coins:
-        print("Coin listesi alınamadı.")
+        print("Coin listesi alınamadı.", flush=True)
         return
 
-    # Mum verileri arka planda indirilecek
-    load_initial_candles()
-
+    # WebSocket, OI ve Sinyal motorunu BEKLEMEDEN hemen başlat
     threading.Thread(target=update_oi, daemon=True).start()
     threading.Thread(target=websocket_worker, daemon=True).start()
     threading.Thread(target=signal_monitor, daemon=True).start()
@@ -893,10 +892,13 @@ def start_background_tasks():
     threading.Thread(target=performance_report, daemon=True).start()
     threading.Thread(target=cleanup, daemon=True).start()
 
+    # Ağır REST istekleri yapan mum yüklemesini en son ayrı bir thread'de çalıştır
+    print("Geçmiş mum verileri arka planda indiriliyor...", flush=True)
+    threading.Thread(target=load_initial_candles, daemon=True).start()
+
+# Gunicorn ile çalışabilmesi için thread başlatmayı en dış seviyeye alıyoruz
+threading.Thread(target=start_background_tasks, daemon=True).start()
+
 if __name__ == "__main__":
-    # 1. Arka plan süreçlerini thread olarak başlat
-    threading.Thread(target=start_background_tasks, daemon=True).start()
-    
-    # 2. Render portunu anında yakala ve canlıya al
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
