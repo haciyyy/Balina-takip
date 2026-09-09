@@ -12,40 +12,40 @@ import websocket
 from flask import Flask
 
 # ============================================================
-# CONFIG (GÜÇLENDİRİLMİŞ AYARLAR)
+# CONFIG (GÜÇLENDİRİLMİŞ VE DÜZELTİLMİŞ AYARLAR)
 # ============================================================
 
 API_URL = "https://api.hyperliquid.xyz/info"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM")
-CHAT_ID = os.environ.get("CHAT_ID", "8833182824")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID = os.environ.get("CHAT_ID", "")
 
 TOP_COINS = 100
 OI_UPDATE_SECONDS = 15
 
-# KALİTE FİLTRELERİ
+# KALİTE VE FİLTRE AYARLARI
 SIGNAL_COOLDOWN_SECONDS = 1800  # Aynı coin için 30 dakika cooldown
-MIN_SCORE = 8                   # Minimum skor (Eski: 6 -> Yeni: 8)
-MIN_STRENGTH = 60              # Minimum sinyal gücü %60
-MIN_VOLUME_RATIO = 1.2         # En az normalin 1.2 katı hacim olmalı
+MIN_SCORE = 9                   # Minimum geçerli skor
+MIN_STRENGTH = 65               # Yüksek doğruluk için min %65 sinyal gücü
+MIN_VOLUME_RATIO = 1.3          # En az normalin 1.3 katı hacim
 
 REQUIRE_5M_CONFIRMATION = True
-WHALE_USD = 100_000
+WHALE_USD = 100_000             # Balina işlem eşiği ($100k)
 MAX_CANDLES = 300
 MAX_TRADES = 1000
 
 DB_FILE = "hyperliquid_signals.db"
 
 # ============================================================
-# FLASK
+# FLASK APP
 # ============================================================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Hyperliquid Direction Bot (Optimized) Running", 200
+    return "Hyperliquid Direction Bot (Mathematically Corrected & Optimized) Running", 200
 
 # ============================================================
 # GLOBAL STATE
@@ -81,6 +81,7 @@ def init_db():
             entry_price REAL,
             score_long REAL,
             score_short REAL,
+            max_possible_score REAL,
             strength REAL,
             price_1m REAL,
             price_5m REAL,
@@ -113,14 +114,14 @@ def save_signal(data):
     conn.execute("""
         INSERT INTO signals (
             timestamp, coin, direction, entry_price, score_long, score_short,
-            strength, price_1m, price_5m, price_15m, ema9_1m, ema21_1m,
-            ema9_5m, ema21_5m, rsi_1m, rsi_5m, oi_change, oi_change_pct,
-            buy_flow, sell_flow, volume_ratio_1m, volume_ratio_5m
+            max_possible_score, strength, price_1m, price_5m, price_15m, 
+            ema9_1m, ema21_1m, ema9_5m, ema21_5m, rsi_1m, rsi_5m, oi_change, 
+            oi_change_pct, buy_flow, sell_flow, volume_ratio_1m, volume_ratio_5m
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         data["timestamp"], data["coin"], data["direction"], data["entry_price"],
-        data["score_long"], data["score_short"], data["strength"],
+        data["score_long"], data["score_short"], data["max_possible_score"], data["strength"],
         data["price_1m"], data["price_5m"], data["price_15m"],
         data["ema9_1m"], data["ema21_1m"], data["ema9_5m"], data["ema21_5m"],
         data["rsi_1m"], data["rsi_5m"], data["oi_change"], data["oi_change_pct"],
@@ -130,7 +131,7 @@ def save_signal(data):
     conn.close()
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM INTEGRATION
 # ============================================================
 
 def send_telegram(message):
@@ -148,10 +149,10 @@ def send_telegram(message):
         if res.status_code != 200:
             print(f"Telegram API Hatası ({res.status_code}): {res.text}", flush=True)
     except Exception as e:
-        print("Telegram error:", e, flush=True)
+        print("Telegram hatası:", e, flush=True)
 
 # ============================================================
-# HYPERLIQUID REST (With Rate-Limit Handling)
+# HYPERLIQUID REST API
 # ============================================================
 
 def hl_info(payload, retries=3):
@@ -195,9 +196,9 @@ def load_top_coins():
         rows.sort(key=lambda x: x[1], reverse=True)
         coins = [x[0] for x in rows[:TOP_COINS]]
 
-        print(f"{len(coins)} coin yüklendi.", flush=True)
+        print(f"{len(coins)} adet yüksek hacimli coin yüklendi.", flush=True)
     except Exception as e:
-        print("Coin loading error:", e, flush=True)
+        print("Coin yükleme hatası:", e, flush=True)
 
 # ============================================================
 # INITIAL CANDLE HISTORY
@@ -241,35 +242,50 @@ def load_initial_candles():
             except Exception as e:
                 print("Candle load error", coin, interval, e, flush=True)
 
-            time.sleep(0.25)
+            time.sleep(0.1)
 
-        print("History loaded:", coin, flush=True)
+        print("Geçmiş veri yüklendi:", coin, flush=True)
 
 # ============================================================
-# INDICATORS
+# MATHEMATICALLY CORRECT INDICATORS
 # ============================================================
 
 def ema(values, period):
+    """
+    Doğru Üstel Hareketli Ortalama (EMA) Hesaplaması
+    """
     if len(values) < period:
         return None
     multiplier = 2 / (period + 1)
+    # İlk değer için Basit Hareketli Ortalama (SMA)
     result = sum(values[:period]) / period
+    
+    # Takip eden değerler için EMA Formülü: (Fiyat * K) + (Önceki EMA * (1 - K))
     for price in values[period:]:
-        result = (price - result) * multiplier + result
+        result = (price * multiplier) + (result * (1 - multiplier))
     return result
 
 def rsi(values, period=14):
+    """
+    Doğru Wilder's Smoothing Yöntemli RSI Hesaplaması
+    """
     if len(values) < period + 1:
         return None
-    gains, losses = [], []
+
+    gains = []
+    losses = []
+
     for i in range(1, len(values)):
         change = values[i] - values[i - 1]
         if change > 0:
             gains.append(change)
-            losses.append(0)
+            losses.append(0.0)
         else:
-            gains.append(0)
+            gains.append(0.0)
             losses.append(abs(change))
+
+    if len(gains) < period:
+        return None
 
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
@@ -279,31 +295,35 @@ def rsi(values, period=14):
         avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
 
     if avg_loss == 0:
-        return 100
+        return 100.0
+
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    return 100.0 - (100.0 / (1.0 + rs))
 
 def percentage_change(values, periods=1):
+    """
+    Tam Periyot Değişim Yüzdesi Hesaplaması
+    """
     if len(values) <= periods:
-        return 0
+        return 0.0
     old = values[-periods - 1]
     new = values[-1]
     if old == 0:
-        return 0
-    return ((new - old) / old) * 100
+        return 0.0
+    return ((new - old) / old) * 100.0
 
 def volume_ratio(candle_list, period=20):
     if len(candle_list) < period + 1:
-        return 1
+        return 1.0
     volumes = [x["v"] for x in candle_list]
     current = volumes[-1]
     avg = sum(volumes[-period - 1:-1]) / period
     if avg <= 0:
-        return 1
+        return 1.0
     return current / avg
 
 # ============================================================
-# CANDLE HELPERS
+# INDICATOR HELPER
 # ============================================================
 
 def get_closes(interval, coin):
@@ -322,12 +342,9 @@ def calculate_indicators(interval, coin):
     ema21 = ema(closes, 21)
     rsi_value = rsi(closes, 14)
     momentum = percentage_change(closes, 1)
-
-    if interval == "1m":
-        momentum_5 = percentage_change(closes, 5)
-    else:
-        momentum_5 = percentage_change(closes, 1)
-
+    
+    # 5 mumluk momentum hesaplama
+    momentum_long = percentage_change(closes, 5 if len(closes) >= 6 else 1)
     vol_ratio = volume_ratio(data_copy, 20)
 
     return {
@@ -336,17 +353,17 @@ def calculate_indicators(interval, coin):
         "ema21": ema21,
         "rsi": rsi_value,
         "momentum": momentum,
-        "momentum_long": momentum_5,
+        "momentum_long": momentum_long,
         "volume_ratio": vol_ratio,
     }
 
 # ============================================================
-# TRADE FLOW
+# TRADE & WHALE FLOW ANALYSIS
 # ============================================================
 
 def calculate_trade_flow(coin, seconds=300):
     now = int(time.time() * 1000)
-    buy = sell = whale_buy = whale_sell = 0
+    buy = sell = whale_buy = whale_sell = 0.0
 
     with lock:
         trade_list = list(trades[coin])
@@ -372,11 +389,11 @@ def calculate_trade_flow(coin, seconds=300):
     }
 
 # ============================================================
-# OI
+# OI MONITORING
 # ============================================================
 
 def update_oi():
-    print("OI Güncelleme servisi başladı...", flush=True)
+    print("OI Güncelleme servisi aktif...", flush=True)
     while True:
         data = hl_info({"type": "metaAndAssetCtxs"})
         if data:
@@ -398,9 +415,14 @@ def update_oi():
                     with lock:
                         old = previous_oi.get(coin, oi_usd)
                         delta = oi_usd - old
+
+                        # DÜZELTME #2: Değişim yüzdesi doğru biçimde ESKİ OI değerine oranlanıyor
+                        oi_pct = (delta / old) * 100.0 if old > 0 else 0.0
+
                         market[coin].update({
                             "oi": oi_usd,
                             "oi_delta": delta,
+                            "oi_pct": oi_pct,
                             "oracle": oracle,
                             "mark": mark,
                             "funding": funding,
@@ -408,12 +430,12 @@ def update_oi():
                         })
                         previous_oi[coin] = oi_usd
             except Exception as e:
-                print("OI parse error:", e, flush=True)
+                print("OI Parse Hatası:", e, flush=True)
 
         time.sleep(OI_UPDATE_SECONDS)
 
 # ============================================================
-# WEBSOCKET
+# WEBSOCKET WORKER
 # ============================================================
 
 def ws_subscribe(ws, coin):
@@ -466,7 +488,7 @@ def process_candle(data):
                 else:
                     arr.append(item)
         except Exception as e:
-            print("Candle parse error:", e, flush=True)
+            print("Candle parse hatası:", e, flush=True)
 
 def websocket_worker():
     while True:
@@ -496,15 +518,15 @@ def websocket_worker():
                         process_trade(data)
                     elif channel == "candle":
                         process_candle(data)
-                except Exception as e:
+                except Exception:
                     break
-        except Exception as e:
+        except Exception:
             pass
 
         time.sleep(5)
 
 # ============================================================
-# OPTIMIZED SIGNAL ENGINE (SATIŞ/ALIŞ FİLTRELERİ GÜÇLENDİRİLDİ)
+# SIGNAL ENGINE (GÜÇLENDİRİLMİŞ MANTIK VE DİNAMİK SKORLAMA)
 # ============================================================
 
 def generate_signal(coin):
@@ -515,7 +537,7 @@ def generate_signal(coin):
     if not i1 or not i5 or not i15:
         return None
 
-    # HACİM KONTROLÜ (En az 1.2x hacim şartı)
+    # Hacim Filtresi (En az bir periyotta minimum hacim şartı)
     if i1["volume_ratio"] < MIN_VOLUME_RATIO and i5["volume_ratio"] < MIN_VOLUME_RATIO:
         return None
 
@@ -525,9 +547,9 @@ def generate_signal(coin):
     if not m:
         return None
 
-    oi_delta = m.get("oi_delta", 0)
     oi = m.get("oi", 0)
-    oi_pct = (oi_delta / oi) * 100 if oi > 0 else 0
+    oi_delta = m.get("oi_delta", 0)
+    oi_pct = m.get("oi_pct", 0)
 
     flow = calculate_trade_flow(coin, 300)
     buy, sell = flow["buy"], flow["sell"]
@@ -535,9 +557,12 @@ def generate_signal(coin):
 
     long_score = 0
     short_score = 0
+    max_possible_score = 0  # Dinamik olarak hesaplanacak
+
     reasons_long, reasons_short = [], []
 
-    # 5M - Trend
+    # 1. 5M Trend (Max +3)
+    max_possible_score += 3
     if i5["ema9"] > i5["ema21"]:
         long_score += 3
         reasons_long.append("5M EMA bullish")
@@ -545,6 +570,8 @@ def generate_signal(coin):
         short_score += 3
         reasons_short.append("5M EMA bearish")
 
+    # 2. 5M Momentum (Max +2)
+    max_possible_score += 2
     if i5["momentum"] > 0.25:
         long_score += 2
         reasons_long.append("5M momentum pozitif")
@@ -552,7 +579,8 @@ def generate_signal(coin):
         short_score += 2
         reasons_short.append("5M momentum negatif")
 
-    # 1M - Entry
+    # 3. 1M Entry Trend (Max +2)
+    max_possible_score += 2
     if i1["ema9"] > i1["ema21"]:
         long_score += 2
         reasons_long.append("1M EMA bullish")
@@ -560,6 +588,8 @@ def generate_signal(coin):
         short_score += 2
         reasons_short.append("1M EMA bearish")
 
+    # 4. 1M Momentum (Max +2)
+    max_possible_score += 2
     if i1["momentum"] > 0.15:
         long_score += 2
         reasons_long.append("1M momentum pozitif")
@@ -567,40 +597,49 @@ def generate_signal(coin):
         short_score += 2
         reasons_short.append("1M momentum negatif")
 
-    # 15M Trend Filter
+    # 5. 15M Macro Trend (Max +1)
+    max_possible_score += 1
     if i15["ema9"] > i15["ema21"]:
         long_score += 1
     elif i15["ema9"] < i15["ema21"]:
         short_score += 1
 
-    # RSI
+    # 6. RSI Seviyesi (Max +1)
+    max_possible_score += 1
     if i5["rsi"] is not None:
         if 52 <= i5["rsi"] <= 68:
             long_score += 1
         elif 32 <= i5["rsi"] <= 48:
             short_score += 1
 
-    # Volume Score
+    # 7. Hacim İvmesi (Max +2)
+    max_possible_score += 2
     if i1["volume_ratio"] >= 1.5:
-        if i1["momentum"] > 0: long_score += 1
-        elif i1["momentum"] < 0: short_score += 1
+        if i1["momentum"] > 0:
+            long_score += 1
+        elif i1["momentum"] < 0:
+            short_score += 1
 
     if i5["volume_ratio"] >= 1.5:
-        if i5["momentum"] > 0: long_score += 1
-        elif i5["momentum"] < 0: short_score += 1
+        if i5["momentum"] > 0:
+            long_score += 1
+        elif i5["momentum"] < 0:
+            short_score += 1
 
-    # OI + Price
+    # 8. Open Interest + Price Action (Max +2)
+    max_possible_score += 2
     price_5m = i5["momentum"]
     if oi_pct > 0.30 and price_5m > 0.30:
         long_score += 2
-        reasons_long.append("OI↑ + Price↑")
+        reasons_long.append("OI↑ + Price↑ (Güçlü Alım)")
     elif oi_pct > 0.30 and price_5m < -0.30:
         short_score += 2
-        reasons_short.append("OI↑ + Price↓")
+        reasons_short.append("OI↑ + Price↓ (Güçlü Satım)")
 
-    # Trade Flow
+    # 9. Trade Flow (Max +2)
     total_flow = buy + sell
     if total_flow > 0:
+        max_possible_score += 2
         buy_ratio = buy / total_flow
         if buy_ratio >= 0.55:
             long_score += 2
@@ -609,9 +648,10 @@ def generate_signal(coin):
             short_score += 2
             reasons_short.append("Aggressive sell flow")
 
-    # Whale Flow
+    # 10. Whale Flow - Akıllı Para Akışı (Max +2)
     whale_total = whale_buy + whale_sell
-    if whale_total > WHALE_USD:
+    if whale_total >= WHALE_USD:
+        max_possible_score += 2
         whale_ratio = whale_buy / whale_total
         if whale_ratio >= 0.60:
             long_score += 2
@@ -620,17 +660,17 @@ def generate_signal(coin):
             short_score += 2
             reasons_short.append("Whale sell")
 
+    # Trend Teyidi (5M Onayı Şartı)
     if REQUIRE_5M_CONFIRMATION:
         if long_score > short_score and not (i5["ema9"] > i5["ema21"]):
             return None
         elif short_score > long_score and not (i5["ema9"] < i5["ema21"]):
             return None
 
-    # Decision
     difference = abs(long_score - short_score)
     winning_score = max(long_score, short_score)
-    
-    # YÜKSEK KALİTE SİNYAL SÜZGEÇLERİ
+
+    # Minimum skor ve yön farkı eşiği
     if winning_score < MIN_SCORE or difference < 3:
         return None
 
@@ -641,11 +681,9 @@ def generate_signal(coin):
     else:
         return None
 
-    # Signal Strength
-    max_possible = 18
-    strength = min(100, int((winning_score / max_possible) * 100))
+    # DÜZELTME #1: Güç hesabı dinamik max_possible_score üzerinden yapılıyor
+    strength = min(100, int((winning_score / max_possible_score) * 100))
 
-    # %60 Altındaki Zayıf Sinyalleri İptal Et
     if strength < MIN_STRENGTH:
         return None
 
@@ -655,6 +693,7 @@ def generate_signal(coin):
         "price": i1["price"],
         "long_score": long_score,
         "short_score": short_score,
+        "max_possible_score": max_possible_score,
         "strength": strength,
         "i1": i1, "i5": i5, "i15": i15,
         "oi": oi, "oi_delta": oi_delta, "oi_pct": oi_pct,
@@ -664,7 +703,7 @@ def generate_signal(coin):
     }
 
 # ============================================================
-# TELEGRAM SIGNAL
+# TELEGRAM SİNYAL MESAJI
 # ============================================================
 
 def send_signal(signal):
@@ -674,6 +713,12 @@ def send_signal(signal):
 
     title = "🚀 GÜÇLÜ LONG SİNYALİ" if direction == "LONG" else "🔻 GÜÇLÜ SHORT SİNYALİ"
     emoji = "🟢" if direction == "LONG" else "🔴"
+
+    whale_total = signal["whale_buy"] + signal["whale_sell"]
+    if whale_total > 0:
+        whale_bias = "ALIM ağırlıklı" if signal["whale_buy"] >= signal["whale_sell"] else "SATIM ağırlıklı"
+    else:
+        whale_bias = "Belirgin whale akışı yok"
 
     message = f"""
 {title}
@@ -685,13 +730,13 @@ def send_signal(signal):
 ━━━━━━━━━━━━━━━━━━
 
 🔥 5M ANA TREND
-Fiyat: {i5["momentum"]:+.2f}%
+Fiyat Değişimi: {i5["momentum"]:+.2f}%
 EMA9: {i5["ema9"]:.6f}
 EMA21: {i5["ema21"]:.6f}
 RSI: {i5["rsi"]:.1f}
 
 ⚡ 1M GİRİŞ
-Fiyat değişimi: {i1["momentum"]:+.2f}%
+Fiyat Değişimi: {i1["momentum"]:+.2f}%
 EMA9: {i1["ema9"]:.6f}
 EMA21: {i1["ema21"]:.6f}
 RSI: {i1["rsi"]:.1f}
@@ -701,14 +746,14 @@ Değişim: {i15["momentum"]:+.2f}%
 
 ━━━━━━━━━━━━━━━━━━
 
-📊 OI
+📊 OPEN INTEREST (OI)
 Değişim: ${signal["oi_delta"]:,.0f}
 OI %: {signal["oi_pct"]:+.2f}%
 Toplam OI: ${signal["oi"]:,.0f}
 
 ━━━━━━━━━━━━━━━━━━
 
-🐋 WHALE FLOW
+🐋 WHALE FLOW ({whale_bias})
 BUY: ${signal["whale_buy"]:,.0f}
 SELL: ${signal["whale_sell"]:,.0f}
 
@@ -718,17 +763,16 @@ SELL: ${signal["sell"]:,.0f}
 
 ━━━━━━━━━━━━━━━━━━
 
-📊 HACİM
-1M: x{i1["volume_ratio"]:.2f}
-5M: x{i5["volume_ratio"]:.2f}
+📊 HACİM İVMESİ
+1M Hacim Katı: x{i1["volume_ratio"]:.2f}
+5M Hacim Katı: x{i5["volume_ratio"]:.2f}
 
 ━━━━━━━━━━━━━━━━━━
 
-🟢 LONG SCORE: {signal["long_score"]}
-🔴 SHORT SCORE: {signal["short_score"]}
+🟢 LONG SCORE: {signal["long_score"]} / {signal["max_possible_score"]}
+🔴 SHORT SCORE: {signal["short_score"]} / {signal["max_possible_score"]}
 
-{emoji} SIGNAL STRENGTH:
-{signal["strength"]}/100
+{emoji} SIGNAL STRENGTH: %{signal["strength"]}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -741,7 +785,7 @@ SELL: ${signal["sell"]:,.0f}
 # ============================================================
 
 def signal_monitor():
-    print("Signal engine başladı.", flush=True)
+    print("Sinyal motoru başlatıldı.", flush=True)
     while True:
         try:
             for coin in list(coins):
@@ -754,8 +798,8 @@ def signal_monitor():
                     previous = last_signal.get(coin)
 
                     if previous:
-                        if (previous["direction"] == signal["direction"] and 
-                            now - previous["time"] < SIGNAL_COOLDOWN_SECONDS):
+                        if (previous["direction"] == signal["direction"] and
+                                now - previous["time"] < SIGNAL_COOLDOWN_SECONDS):
                             continue
 
                     last_signal[coin] = {"direction": signal["direction"], "time": now}
@@ -767,6 +811,7 @@ def signal_monitor():
                         "entry_price": signal["price"],
                         "score_long": signal["long_score"],
                         "score_short": signal["short_score"],
+                        "max_possible_score": signal["max_possible_score"],
                         "strength": signal["strength"],
                         "price_1m": signal["i1"]["momentum"],
                         "price_5m": signal["i5"]["momentum"],
@@ -788,15 +833,15 @@ def signal_monitor():
                     send_signal(signal)
 
                 except Exception as e:
-                    print("Signal error", coin, e, flush=True)
+                    print("Signal hatası", coin, e, flush=True)
 
         except Exception as e:
-            print("Monitor error:", e, flush=True)
+            print("Monitor hatası:", e, flush=True)
 
         time.sleep(10)
 
 # ============================================================
-# PERFORMANCE EVALUATOR
+# EVALUATOR & PERFORMANCE REPORT
 # ============================================================
 
 def evaluate_signals():
@@ -823,29 +868,28 @@ def evaluate_signals():
 
                 if not ev1 and age >= 60:
                     result = ((current - entry) / entry) * 100
-                    if direction == "SHORT": result *= -1
+                    if direction == "SHORT":
+                        result *= -1
                     conn.execute("UPDATE signals SET result_1m = ?, evaluated_1m = 1 WHERE id = ?", (result, sid))
 
                 if not ev5 and age >= 300:
                     result = ((current - entry) / entry) * 100
-                    if direction == "SHORT": result *= -1
+                    if direction == "SHORT":
+                        result *= -1
                     conn.execute("UPDATE signals SET result_5m = ?, evaluated_5m = 1 WHERE id = ?", (result, sid))
 
                 if not ev15 and age >= 900:
                     result = ((current - entry) / entry) * 100
-                    if direction == "SHORT": result *= -1
+                    if direction == "SHORT":
+                        result *= -1
                     conn.execute("UPDATE signals SET result_15m = ?, evaluated_15m = 1 WHERE id = ?", (result, sid))
 
             conn.commit()
             conn.close()
         except Exception as e:
-            print("Evaluator error:", e, flush=True)
+            print("Evaluator hatası:", e, flush=True)
 
         time.sleep(30)
-
-# ============================================================
-# PERFORMANCE REPORT
-# ============================================================
 
 def performance_report():
     while True:
@@ -855,17 +899,17 @@ def performance_report():
             for period in ["result_1m", "result_5m", "result_15m"]:
                 rows = conn.execute(f"SELECT {period} FROM signals WHERE {period} IS NOT NULL").fetchall()
                 values = [float(x[0]) for x in rows]
-                if not values: continue
+                if not values:
+                    continue
 
                 wins = [x for x in values if x > 0]
-                losses = [x for x in values if x <= 0]
                 accuracy = (len(wins) / len(values)) * 100
                 avg = sum(values) / len(values)
 
-                print(f"\nPERFORMANCE {period}\nSignals: {len(values)} | Wins: {len(wins)} | Accuracy: {accuracy:.2f}% | Avg: {avg:+.4f}%\n", flush=True)
+                print(f"\n[PERFORMANS - {period}] Sinyal: {len(values)} | Başarılı: {len(wins)} | Doğruluk Oranı: %{accuracy:.2f} | Ort. Getiri: %{avg:+.4f}\n", flush=True)
             conn.close()
         except Exception as e:
-            print("Performance error:", e, flush=True)
+            print("Performans raporu hatası:", e, flush=True)
 
 # ============================================================
 # CLEANUP
@@ -881,13 +925,13 @@ def cleanup():
         time.sleep(60)
 
 # ============================================================
-# MAIN & THREAD START
+# MAIN THREAD MANAGEMENT
 # ============================================================
 
 def start_background_tasks():
     print("""
 ==========================================================
-      HYPERLIQUID LONG / SHORT DIRECTION BOT (OPTIMIZED)
+   HYPERLIQUID DIRECTION BOT (MATHEMATICALLY CORRECTED)
 ==========================================================
 """, flush=True)
     init_db()
@@ -904,7 +948,7 @@ def start_background_tasks():
     threading.Thread(target=performance_report, daemon=True).start()
     threading.Thread(target=cleanup, daemon=True).start()
 
-    print("Geçmiş mum verileri arka planda indiriliyor...", flush=True)
+    print("Geçmiş mum verileri indiriliyor...", flush=True)
     threading.Thread(target=load_initial_candles, daemon=True).start()
 
 threading.Thread(target=start_background_tasks, daemon=True).start()
