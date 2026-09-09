@@ -12,14 +12,15 @@ import websocket
 from flask import Flask
 
 # ============================================================
-# CONFIG (GÜÇLENDİRİLMİŞ VE DÜZELTİLMİŞ AYARLAR)
+# CONFIG (GÜÇLENDİRİLMİŞ AYARLAR & TELEGRAM BİLGİLERİ)
 # ============================================================
 
 API_URL = "https://api.hyperliquid.xyz/info"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-CHAT_ID = os.environ.get("CHAT_ID", "")
+# Telegram Konfigürasyonu
+TELEGRAM_TOKEN = "8991720102:AAHTZGU65iIRD6Pi5gd9dlh_0z8gYhsqJlM"
+CHAT_ID = "8833182824"
 
 TOP_COINS = 100
 OI_UPDATE_SECONDS = 15
@@ -45,7 +46,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Hyperliquid Direction Bot (Mathematically Corrected & Optimized) Running", 200
+    return "Hyperliquid Direction Bot (Fixed & Telegram Active) Running", 200
 
 # ============================================================
 # GLOBAL STATE
@@ -135,8 +136,8 @@ def save_signal(data):
 # ============================================================
 
 def send_telegram(message):
-    if not TELEGRAM_TOKEN:
-        print("Telegram token ayarlanmamış.", flush=True)
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("Telegram token veya Chat ID ayarlanmamış.", flush=True)
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -247,28 +248,19 @@ def load_initial_candles():
         print("Geçmiş veri yüklendi:", coin, flush=True)
 
 # ============================================================
-# MATHEMATICALLY CORRECT INDICATORS
+# INDICATORS
 # ============================================================
 
 def ema(values, period):
-    """
-    Doğru Üstel Hareketli Ortalama (EMA) Hesaplaması
-    """
     if len(values) < period:
         return None
     multiplier = 2 / (period + 1)
-    # İlk değer için Basit Hareketli Ortalama (SMA)
     result = sum(values[:period]) / period
-    
-    # Takip eden değerler için EMA Formülü: (Fiyat * K) + (Önceki EMA * (1 - K))
     for price in values[period:]:
         result = (price * multiplier) + (result * (1 - multiplier))
     return result
 
 def rsi(values, period=14):
-    """
-    Doğru Wilder's Smoothing Yöntemli RSI Hesaplaması
-    """
     if len(values) < period + 1:
         return None
 
@@ -301,9 +293,6 @@ def rsi(values, period=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 def percentage_change(values, periods=1):
-    """
-    Tam Periyot Değişim Yüzdesi Hesaplaması
-    """
     if len(values) <= periods:
         return 0.0
     old = values[-periods - 1]
@@ -342,8 +331,6 @@ def calculate_indicators(interval, coin):
     ema21 = ema(closes, 21)
     rsi_value = rsi(closes, 14)
     momentum = percentage_change(closes, 1)
-    
-    # 5 mumluk momentum hesaplama
     momentum_long = percentage_change(closes, 5 if len(closes) >= 6 else 1)
     vol_ratio = volume_ratio(data_copy, 20)
 
@@ -415,8 +402,6 @@ def update_oi():
                     with lock:
                         old = previous_oi.get(coin, oi_usd)
                         delta = oi_usd - old
-
-                        # DÜZELTME #2: Değişim yüzdesi doğru biçimde ESKİ OI değerine oranlanıyor
                         oi_pct = (delta / old) * 100.0 if old > 0 else 0.0
 
                         market[coin].update({
@@ -526,7 +511,7 @@ def websocket_worker():
         time.sleep(5)
 
 # ============================================================
-# SIGNAL ENGINE (GÜÇLENDİRİLMİŞ MANTIK VE DİNAMİK SKORLAMA)
+# SIGNAL ENGINE
 # ============================================================
 
 def generate_signal(coin):
@@ -537,7 +522,6 @@ def generate_signal(coin):
     if not i1 or not i5 or not i15:
         return None
 
-    # Hacim Filtresi (En az bir periyotta minimum hacim şartı)
     if i1["volume_ratio"] < MIN_VOLUME_RATIO and i5["volume_ratio"] < MIN_VOLUME_RATIO:
         return None
 
@@ -557,7 +541,7 @@ def generate_signal(coin):
 
     long_score = 0
     short_score = 0
-    max_possible_score = 0  # Dinamik olarak hesaplanacak
+    max_possible_score = 0
 
     reasons_long, reasons_short = [], []
 
@@ -597,14 +581,14 @@ def generate_signal(coin):
         short_score += 2
         reasons_short.append("1M momentum negatif")
 
-    # 5. 15M Macro Trend (Max +1)
+    # 5. 15M Trend (Max +1)
     max_possible_score += 1
     if i15["ema9"] > i15["ema21"]:
         long_score += 1
     elif i15["ema9"] < i15["ema21"]:
         short_score += 1
 
-    # 6. RSI Seviyesi (Max +1)
+    # 6. RSI (Max +1)
     max_possible_score += 1
     if i5["rsi"] is not None:
         if 52 <= i5["rsi"] <= 68:
@@ -612,7 +596,7 @@ def generate_signal(coin):
         elif 32 <= i5["rsi"] <= 48:
             short_score += 1
 
-    # 7. Hacim İvmesi (Max +2)
+    # 7. Volume Ratio (Max +2)
     max_possible_score += 2
     if i1["volume_ratio"] >= 1.5:
         if i1["momentum"] > 0:
@@ -626,15 +610,15 @@ def generate_signal(coin):
         elif i5["momentum"] < 0:
             short_score += 1
 
-    # 8. Open Interest + Price Action (Max +2)
+    # 8. Open Interest + Price (Max +2)
     max_possible_score += 2
     price_5m = i5["momentum"]
     if oi_pct > 0.30 and price_5m > 0.30:
         long_score += 2
-        reasons_long.append("OI↑ + Price↑ (Güçlü Alım)")
+        reasons_long.append("OI↑ + Price↑")
     elif oi_pct > 0.30 and price_5m < -0.30:
         short_score += 2
-        reasons_short.append("OI↑ + Price↓ (Güçlü Satım)")
+        reasons_short.append("OI↑ + Price↓")
 
     # 9. Trade Flow (Max +2)
     total_flow = buy + sell
@@ -648,7 +632,7 @@ def generate_signal(coin):
             short_score += 2
             reasons_short.append("Aggressive sell flow")
 
-    # 10. Whale Flow - Akıllı Para Akışı (Max +2)
+    # 10. Whale Flow (Max +2)
     whale_total = whale_buy + whale_sell
     if whale_total >= WHALE_USD:
         max_possible_score += 2
@@ -660,7 +644,6 @@ def generate_signal(coin):
             short_score += 2
             reasons_short.append("Whale sell")
 
-    # Trend Teyidi (5M Onayı Şartı)
     if REQUIRE_5M_CONFIRMATION:
         if long_score > short_score and not (i5["ema9"] > i5["ema21"]):
             return None
@@ -670,7 +653,6 @@ def generate_signal(coin):
     difference = abs(long_score - short_score)
     winning_score = max(long_score, short_score)
 
-    # Minimum skor ve yön farkı eşiği
     if winning_score < MIN_SCORE or difference < 3:
         return None
 
@@ -681,7 +663,6 @@ def generate_signal(coin):
     else:
         return None
 
-    # DÜZELTME #1: Güç hesabı dinamik max_possible_score üzerinden yapılıyor
     strength = min(100, int((winning_score / max_possible_score) * 100))
 
     if strength < MIN_STRENGTH:
@@ -703,7 +684,7 @@ def generate_signal(coin):
     }
 
 # ============================================================
-# TELEGRAM SİNYAL MESAJI
+# TELEGRAM SIGNAL
 # ============================================================
 
 def send_signal(signal):
@@ -841,7 +822,7 @@ def signal_monitor():
         time.sleep(10)
 
 # ============================================================
-# EVALUATOR & PERFORMANCE REPORT
+# PERFORMANCE EVALUATOR
 # ============================================================
 
 def evaluate_signals():
@@ -931,7 +912,7 @@ def cleanup():
 def start_background_tasks():
     print("""
 ==========================================================
-   HYPERLIQUID DIRECTION BOT (MATHEMATICALLY CORRECTED)
+   HYPERLIQUID DIRECTION BOT (TELEGRAM READY)
 ==========================================================
 """, flush=True)
     init_db()
